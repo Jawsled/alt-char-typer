@@ -1,233 +1,286 @@
 #!/usr/bin/env python3
 """
-Alternative Characters for Directory Paths GUI App
-Calculator-style button interface - each character is a button that copies to clipboard.
-PNG image embedded at the bottom.
+Alt-Char Typer
+A compact type-specimen keypad: every button copies a Unicode stand-in for a
+character Windows refuses to allow in file or folder names.
+
+Each specimen card shows the forbidden original struck through in red, the
+stand-in glyph large, and the codepoint beneath it. The dark theme borrows
+Windows' own colors: dark-mode error red for the refusal, dark-mode accent
+blue for the copy action.
 """
 
-import sys
+import html
 import os
-from PyQt6 import QtWidgets, QtCore, QtGui
+import sys
+
+from PyQt6 import QtCore, QtGui, QtWidgets
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+ERROR_IMAGE = os.path.join(
+    APP_DIR, "A file name cant contain any of the following characters.png"
+)
+
+# (stand-in character, the forbidden character it replaces)
+STAND_INS = [
+    ("꞉", ":"),
+    ("／", "/"),
+    ("＼", "\\"),
+    ("＊", "*"),
+    ("？", "?"),
+    ("＜", "<"),
+    ("＞", ">"),
+    ("｜", "|"),
+    ("“", '"'),
+    ("”", '"'),
+]
+
+# Windows-dark palette: the refusal dialog's red and the system accent blue,
+# in their Windows 11 dark-mode variants.
+BG = "#1B1F25"
+CARD = "#262B33"
+CARD_HOVER = "#2B313A"
+CARD_PRESS = "#21262D"
+LINE = "#383E48"
+LINE_HOVER = "#4A525E"
+INK = "#E9ECF1"
+INK_SOFT = "#A6ADB8"
+MUTED = "#8A93A0"
+RED = "#FF99A4"
+BLUE = "#4CC2FF"
+COPIED_BG = "rgba(76, 194, 255, 0.12)"
+STATUS_BG = "#16191E"
+
+MONO_STACK = "'Cascadia Mono','Consolas',monospace"
+
+STYLESHEET = f"""
+#root {{
+    background: {BG};
+}}
+QLabel#appTitle {{
+    font-size: 17px;
+    font-weight: 700;
+    color: {INK};
+}}
+QLabel#appSubtitle {{
+    font-size: 12px;
+    color: {INK_SOFT};
+}}
+QPushButton {{
+    background: {CARD};
+    border: 1px solid {LINE};
+    border-radius: 6px;
+}}
+QPushButton:hover {{
+    background: {CARD_HOVER};
+    border-color: {LINE_HOVER};
+}}
+QPushButton:pressed {{
+    background: {CARD_PRESS};
+}}
+QPushButton:focus {{
+    border-color: {BLUE};
+}}
+QPushButton[copied="true"] {{
+    background: {COPIED_BG};
+    border-color: {BLUE};
+}}
+QLabel#bannedChar {{
+    font-size: 12px;
+    font-weight: 600;
+}}
+QLabel#glyph {{
+    font-size: 44px;
+    color: {INK};
+}}
+QLabel#code {{
+    font-family: {MONO_STACK};
+    font-size: 11px;
+    color: {MUTED};
+}}
+QFrame#figure {{
+    background: {CARD};
+    border: 1px solid {LINE};
+    border-radius: 6px;
+}}
+QLabel#figureImage {{
+    background: transparent;
+}}
+QLabel#statusLabel {{
+    background: {STATUS_BG};
+    border-top: 1px solid {LINE};
+    padding: 8px 20px;
+    font-size: 12px;
+    color: {INK_SOFT};
+}}
+"""
 
 
-# Characters for the buttons: ꞉ ／ ＼ ＊ ？ ＜ ＞ ｜
-ALTERNATE_CHARS = {
-    '꞉': 'U+A789 LATIN LETTER WITH STROKE',
-    '／': 'U+FF0F FULL SOLIDUS',
-    '＼': 'U+FF3C FULL REVERSE SOLIDUS',
-    '＊': 'U+FF0A FULL ASTERISK',
-    '？': 'U+FF1F FULL QUESTION MARK',
-    '＜': 'U+FF1C FULL LESS-THAN SIGN',
-    '＞': 'U+FF1E FULL GREATER-THAN SIGN',
-    '｜': 'U+FF5C FULL VERTICAL LINE',
-}
-
-# Problematic characters for Windows filenames
-PROBLEM_CHARS = set('<>:"|?*')
+def codepoint(char):
+    """Return the U+XXXX label for a character."""
+    return f"U+{ord(char):04X}"
 
 
-class CharButton(QtWidgets.QPushButton):
-    """A button that displays a character and copies it to clipboard when clicked."""
+class SpecimenButton(QtWidgets.QPushButton):
+    """A specimen card: forbidden original struck out, stand-in glyph, codepoint."""
 
-    def __init__(self, char, description, parent=None):
+    copied = QtCore.pyqtSignal(str, str)
+
+    def __init__(self, stand_in, banned, parent=None):
         super().__init__(parent)
-        self.char = char
-        self.description = description
-        self.setText(char)
-        self.setFixedSize(80, 60)
-        font = self.font()
-        font.setPointSize(24)
-        self.setFont(font)
-        self.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #2b2b2b;
-                color: #ffffff;
-                border: 2px solid #555555;
-                border-radius: 8px;
-                font-weight: bold;
-                min-height: 60px;
-            }
-            QPushButton:hover {
-                background-color: #353535;
-                border-color: #666666;
-            }
-            QPushButton:pressed {
-                background-color: #202020;
-                border-color: #444444;
-            }
-        """
-        )
-        self.clicked.connect(self._on_clicked)
+        self.stand_in = stand_in
+        self.banned = banned
+        self.setFixedSize(118, 116)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(f"Copy {stand_in} — a stand-in for '{banned}'")
+        self.setAccessibleName(f"Copy {stand_in}")
 
-    def _on_clicked(self):
-        """Copy the character to clipboard and show feedback."""
-        clipboard = QtWidgets.QApplication.clipboard()
-        clipboard.setText(self.char)
+        body = QtWidgets.QVBoxLayout(self)
+        body.setContentsMargins(8, 10, 8, 10)
+        body.setSpacing(3)
 
-        # Show temporary feedback
-        original_text = self.text()
-        self.setText("✓")
-        self.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #4CAF50;
-                border: 2px solid #4CAF50;
-                border-radius: 8px;
-                font-weight: bold;
-                color: white;
-            }
-        """
-        )
+        self.banned_label = QtWidgets.QLabel(self)
+        self.banned_label.setObjectName("bannedChar")
+        self.banned_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.banned_label.setText(f'<font color="{RED}"><s>{html.escape(banned)}</s></font>')
 
-        # Reset after 1 second
-        QtCore.QTimer.singleShot(1000, self._reset_button)
+        self.glyph_label = QtWidgets.QLabel(stand_in, self)
+        self.glyph_label.setObjectName("glyph")
 
-        # Update status bar / result label in main window
-        self.parent().status_label.setText(
-            f"Copied: '{self.char}' (U+{ord(self.char):04X})"
-        )
+        self.code_label = QtWidgets.QLabel(codepoint(stand_in), self)
+        self.code_label.setObjectName("code")
 
-    def _reset_button(self):
-        """Reset the button appearance."""
-        self.setText(self.char)
-        self.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #2b2b2b;
-                color: #ffffff;
-                border: 2px solid #555555;
-                border-radius: 8px;
-                font-weight: bold;
-                min-height: 60px;
-            }
-            QPushButton:hover {
-                background-color: #353535;
-                border-color: #666666;
-            }
-            QPushButton:pressed {
-                background-color: #202020;
-                border-color: #444444;
-            }
-        """
-        )
+        for label in (self.banned_label, self.glyph_label, self.code_label):
+            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            body.addWidget(label)
+
+        self.clicked.connect(self._on_click)
+
+    def _on_click(self):
+        """Copy the stand-in, flash the card, and announce it."""
+        QtWidgets.QApplication.clipboard().setText(self.stand_in)
+        self.copied.emit(self.stand_in, self.banned)
+        self._set_copied(True)
+        QtCore.QTimer.singleShot(700, lambda: self._set_copied(False))
+
+    def _set_copied(self, on):
+        self.setProperty("copied", on)
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
 
 
 class AlternateCharsWindow(QtWidgets.QWidget):
-    """Main window for the alternate characters app."""
+    """Main window: header, specimen grid, collapsible 'why' figure, status bar."""
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Alternative Characters for Directory Paths")
-        self.resize(500, 600)
-        self.setup_ui()
+        self.setObjectName("root")
+        self.setWindowTitle("Alt-Char Typer")
+        self.setStyleSheet(STYLESHEET)
+        self._build()
+        self.setFixedWidth(542)
+        self.adjustSize()
 
-    def setup_ui(self):
-        """Set up the user interface."""
-        main_layout = QtWidgets.QVBoxLayout(self)
+    def _build(self):
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 0)
+        root.setSpacing(16)
 
-        # Title
-        title = QtWidgets.QLabel("Alternative Characters for Directory Paths")
-        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 8px; color: #ffffff;")
-        main_layout.addWidget(title)
-
-        # Instructions
-        instructions = QtWidgets.QLabel(
-            "Click any character button to copy it to the clipboard."
+        # Header
+        header = QtWidgets.QVBoxLayout()
+        header.setSpacing(4)
+        title = QtWidgets.QLabel("Alt-Char Typer", self)
+        title.setObjectName("appTitle")
+        subtitle = QtWidgets.QLabel(
+            "Click a character to copy it. Each one is a lookalike that "
+            "Windows allows in file names.",
+            self,
         )
-        instructions.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        instructions.setStyleSheet("margin: 0 16px; color: #bbbbbb;")
-        main_layout.addWidget(instructions)
+        subtitle.setObjectName("appSubtitle")
+        subtitle.setWordWrap(True)
+        for label in (title, subtitle):
+            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            header.addWidget(label)
+        root.addLayout(header)
 
-        # Buttons grid - calculator style
-        grid_layout = QtWidgets.QGridLayout()
+        # Specimen grid, 4 columns
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(10)
+        self.buttons = []
+        for index, (stand_in, banned) in enumerate(STAND_INS):
+            button = SpecimenButton(stand_in, banned, self)
+            button.copied.connect(self._on_copied)
+            grid.addWidget(button, index // 4, index % 4)
+            self.buttons.append(button)
+        root.addLayout(grid)
 
-        # Define button layout (rows x cols)
-        # 8 buttons in a 4-column x 2-row keypad layout
-        char_items = list(ALTERNATE_CHARS.items())
-        columns = 4
+        # Figure: the refusal this app works around
+        root.addWidget(self._build_figure(), 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
 
-        for index, (char, description) in enumerate(char_items):
-            row = index // columns
-            col = index % columns
-            btn = CharButton(char, description, self)
-            grid_layout.addWidget(btn, row, col)
+        # Status bar
+        root.addStretch(1)
+        self.status_label = QtWidgets.QLabel("Nothing copied yet", self)
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        root.addWidget(self.status_label)
 
-        main_layout.addLayout(grid_layout)
+    def _build_figure(self):
+        figure = QtWidgets.QFrame(self)
+        figure.setObjectName("figure")
+        layout = QtWidgets.QVBoxLayout(figure)
+        layout.setContentsMargins(12, 12, 12, 12)
 
-        # Status label at bottom before image
-        self.status_label = QtWidgets.QLabel("Ready")
-        self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet(
-            "padding: 8px; background-color: #2b2b2b; color: #ffffff; border-top: 1px solid #555555;"
-        )
-        main_layout.addWidget(self.status_label)
-
-        # Embed PNG image at the bottom
-        self._embed_png(main_layout)
-
-    def _embed_png(self, parent_layout):
-        """Embed the PNG image at the bottom of the UI."""
-        png_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "A file name cant contain any of the following characters.png",
-        )
-
-        if os.path.exists(png_path):
-            # Load and display the PNG
-            pixmap = QtGui.QPixmap(png_path)
-            if not pixmap.isNull():
-                # Scale pixmap to reasonable size while maintaining aspect ratio
-                scaled = pixmap.scaled(
-                    400, 150,
+        image_label = QtWidgets.QLabel(figure)
+        image_label.setObjectName("figureImage")
+        image_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        pixmap = QtGui.QPixmap(ERROR_IMAGE)
+        if not pixmap.isNull():
+            if pixmap.width() > 380 or pixmap.height() > 360:
+                pixmap = pixmap.scaled(
+                    380,
+                    360,
                     QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                     QtCore.Qt.TransformationMode.SmoothTransformation,
                 )
-
-                image_widget = QtWidgets.QLabel()
-                image_widget.setPixmap(scaled)
-                image_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                image_widget.setStyleSheet(
-                    "border: 1px solid #555555; margin: 4px; background-color: #1e1e1e;"
-                )
-
-                parent_layout.addWidget(image_widget, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
-            else:
-                self._show_missing_image_placeholder(parent_layout)
+            image_label.setPixmap(pixmap)
         else:
-            self._show_missing_image_placeholder(parent_layout)
+            image_label.setText("Windows error dialog image not found")
 
-    def _show_missing_image_placeholder(self, parent_layout):
-        """Show a placeholder when PNG is not found."""
-        placeholder = QtWidgets.QLabel(
-            "📸 Image: 'A file name cant contain any of the following characters.png'\n"
-            "(not found - showing placeholder)"
+        layout.addWidget(image_label)
+        return figure
+
+    def _on_copied(self, stand_in, _banned):
+        self.status_label.setText(
+            f'<span style="color:{BLUE};font-weight:600;">Copied</span> '
+            f"{html.escape(stand_in)} "
+            f'<span style="font-family:{MONO_STACK};">{codepoint(stand_in)}</span>'
         )
-        placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet(
-            "padding: 20px; background-color: #2b2b2b; border: 2px dashed #888; color: #cccccc;"
-        )
-        parent_layout.addWidget(placeholder)
 
 
 def main():
     """Entry point for the application."""
     app = QtWidgets.QApplication(sys.argv)
-
-    # Set a dark palette so the window background is not white
-    palette = app.palette()
-    palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#1e1e1e"))
-    palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#ffffff"))
-    palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#2b2b2b"))
-    palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#ffffff"))
-    palette.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor("#2b2b2b"))
-    palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#ffffff"))
-    app.setPalette(palette)
-
-    # Set application properties
-    app.setApplicationName("Alt-PathChars")
+    app.setApplicationName("Alt-Char Typer")
     app.setApplicationVersion("1.0")
+    app.setFont(QtGui.QFont("Segoe UI", 9))
+
+    # Dark palette for everything the stylesheet doesn't reach (tooltips, menus)
+    palette = app.palette()
+    for role, color in {
+        QtGui.QPalette.ColorRole.Window: BG,
+        QtGui.QPalette.ColorRole.WindowText: INK,
+        QtGui.QPalette.ColorRole.Base: CARD,
+        QtGui.QPalette.ColorRole.Text: INK,
+        QtGui.QPalette.ColorRole.Button: CARD,
+        QtGui.QPalette.ColorRole.ButtonText: INK,
+        QtGui.QPalette.ColorRole.ToolTipBase: CARD,
+        QtGui.QPalette.ColorRole.ToolTipText: INK,
+        QtGui.QPalette.ColorRole.Highlight: BLUE,
+        QtGui.QPalette.ColorRole.HighlightedText: "#10141A",
+    }.items():
+        palette.setColor(role, QtGui.QColor(color))
+    app.setPalette(palette)
 
     window = AlternateCharsWindow()
     window.show()

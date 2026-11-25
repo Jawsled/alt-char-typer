@@ -4,7 +4,7 @@ A tiny PyQt6 desktop app with big buttons for characters that are alternatives t
 ones Windows won't allow in file/folder names. Click a button and the character is
 copied to your clipboard.
 
-Including: `꞉` `／` `＼` `＊` `？` `＜` `＞` `｜`
+Including: `꞉` `／` `＼` `＊` `？` `＜` `＞` `｜` `“` `”`
 
 
 *Are you tired of seeing this? yea me too.*
